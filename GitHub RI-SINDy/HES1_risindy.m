@@ -2,22 +2,19 @@ close all; clc;
 addpath(genpath('.'));
 
 %% --- DATA ---
-dt  = 0.05;
+dt  = 15 / 301; 
 tau = 0.25;
-N   = 290;
+N   = 280;
 
-load("FH3mRNA_EXTRAP.mat");
-load("FH3hes1_EXTRAP.mat");
+load("interpHes1Data.mat");
+load("interpmRNAData.mat");
 
-t_train = (0:dt:15)';
-t_all   = (0:dt:35)';
-
-x_all = FH3mRNA_EXTRAP(1:10:end);
-y_all = FH3hes1_EXTRAP(1:10:end);
-x     = x_all(1:length(t_train));
-y     = y_all(1:length(t_train));
+t_train = linspace(0, 15, 301)';
+x       = interpmRNAData;   % 400 points, t = 0-15 hrs
+y       = interpHes1Data;   % 400 points, t = 0-15 hrs
 
 %% --- LIBRARY ---
+
 hill_n    = 9;
 hill_k0   = 2.7;
 hill_func = @(p) 1 ./ (1 + (p./hill_k0).^hill_n);
@@ -52,14 +49,14 @@ disp(Xi);
 
 %% --- FORWARD INTEGRATION ---
 XiX = Xi(:, 1);  XiY = Xi(:, 2);
-x_id = zeros(size(x_all));  x_id(1) = x(1);
-y_id = zeros(size(y_all));  y_id(1) = y(1);
+x_id = zeros(size(interpmRNAData));  x_id(1) = x(1);
+y_id = zeros(size(interpHes1Data));  y_id(1) = y(1);
 delay_s = round(tau/dt);
 
-for k = 2:length(t_all)
+for k = 2:length(interpmRNAData)
     xp = x_id(k-1); yp = y_id(k-1);
     if k <= delay_s + 1
-        y_tau_k = interp1(t_train, y, max(t_all(k)-tau, 0), 'linear');
+        y_tau_k = interp1(t_train, y, max(t_train(k)-tau, 0), 'linear');
     else
         y_tau_k = y_id(k - delay_s);
     end
@@ -68,14 +65,21 @@ for k = 2:length(t_all)
     y_id(k) = yp + dt * (phi * XiY);
 end
 
-%% --- PLOT ---
-figure;
+figure
 subplot(1,2,1); hold on;
-plot(t_all, x_all, 'b', t_all, x_id, 'r--');
-xline(t_train(N), 'k:'); xlabel('Time'); ylabel('mRNA'); legend('Data','RI-SINDy'); grid on;
-xlim([0,12])
+plot(t_train, x,    'b',   'LineWidth', 1.5, 'DisplayName', 'Data');
+plot(t_train, x_id, 'r--', 'LineWidth', 1.5, 'DisplayName', 'RI-SINDy');
+xline(t_train(N), 'k:', 'LineWidth', 1.2, 'DisplayName', 'Training end');
+xlabel('Time (hrs)'); ylabel('mRNA Concentration');
+title('mRNA'); legend('Location','best'); grid on;
+xlim([0, 15]);
 
 subplot(1,2,2); hold on;
-plot(t_all, y_all, 'b', t_all, y_id, 'r--');
-xline(t_train(N), 'k:'); xlabel('Time'); ylabel('Hes1'); legend('Data','RI-SINDy'); grid on;
-xlim([0,12])
+plot(t_train, y,    'b',   'LineWidth', 1.5, 'DisplayName', 'Data');
+plot(t_train, y_id, 'r--', 'LineWidth', 1.5, 'DisplayName', 'RI-SINDy');
+xline(t_train(N), 'k:', 'LineWidth', 1.2, 'DisplayName', 'Training end');
+xlabel('Time (hrs)'); ylabel('Hes1 Concentration');
+title('Hes1 Protein'); legend('Location','best'); grid on;
+xlim([0, 15]);
+
+sgtitle('RI-SINDy Identified Trajectories');
