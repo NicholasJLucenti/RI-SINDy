@@ -1,5 +1,11 @@
-function row = poly_library_row(x, y, polyorder)
+function row = poly_library_row(varargin)
+    polyorder = varargin{end};
+    vars      = varargin(1:end-1);
+
     row = 1;
-    for k = 1:polyorder, row = [row, x^k]; end
-    for k = 1:polyorder, row = [row, y^k]; end
+    for i = 1:length(vars)
+        for k = 1:polyorder
+            row = [row, vars{i}^k];
+        end
+    end
 end

@@ -1,12 +1,10 @@
 function [Xi, Xi_var] = risindy(Theta, dXdt, aux_fn, pinned_col, lb, ub, eta, n_iter, prior)
-
     [~, n_lib] = size(Theta);
     n_var      = size(dXdt, 2);
 
     col_scale                       = vecnorm(Theta, 2, 1);
     col_scale(col_scale == 0)       = 1;
     ThetaN                          = Theta ./ col_scale;
-
     target_scale                    = vecnorm(dXdt, 2, 1);
     target_scale(target_scale == 0) = 1;
     dXdtN                           = dXdt ./ target_scale;
@@ -23,9 +21,10 @@ function [Xi, Xi_var] = risindy(Theta, dXdt, aux_fn, pinned_col, lb, ub, eta, n_
 
             [pin_val, pin_var]      = aux_fn(XiN, XiN_var, vi, col_scale, target_scale);
             XiN(pinned_col, vi)     = (1-eta)*XiN(pinned_col, vi) + eta*pin_val;
-            XiN_var(pinned_col, vi) = pin_var / col_scale(pinned_col)^2;
+            XiN_var(pinned_col, vi) = pin_var ./ col_scale(pinned_col)'.^2;
 
-            bN      = dXdtN(:, vi) - ThetaN(:, pinned_col)*XiN(pinned_col, vi);
+            bN = dXdtN(:, vi) - ThetaN(:, pinned_col) * XiN(pinned_col, vi);
+
             w       = W(:, vi);
             active  = find(w < 1e2);
             xi_free = XiN(free_cols, vi);
@@ -33,8 +32,8 @@ function [Xi, Xi_var] = risindy(Theta, dXdt, aux_fn, pinned_col, lb, ub, eta, n_
             if ~isempty(active)
                 ThetaN_w        = ThetaN_free ./ w';
                 xi_free(active) = lsqlin(ThetaN_w(:, active), bN, [], [], [], [], ...
-                                      lb{vi}(active), ub{vi}(active), [], ...
-                                      optimoptions('lsqlin', 'Display', 'none'));
+                                         lb{vi}(active), ub{vi}(active), [], ...
+                                         optimoptions('lsqlin', 'Display', 'none'));
                 xi_free(w >= 1e2) = 0;
             end
 
@@ -45,6 +44,7 @@ function [Xi, Xi_var] = risindy(Theta, dXdt, aux_fn, pinned_col, lb, ub, eta, n_
             rv                     = var(resid) + 1e-10;
             H_mat                  = (ThetaN_free'*ThetaN_free)/rv + diag(W(:, vi));
             XiN_var(free_cols, vi) = diag(inv(H_mat));
+
         end
     end
 
@@ -68,6 +68,3 @@ function w = compute_weights(xi, prior)
             w = 1 ./ (0.05^2 * (xi.^2 + 1e-3));
     end
 end
-
-
- 
