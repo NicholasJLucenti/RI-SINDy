@@ -1,11 +1,12 @@
 function [pin_val, pin_var] = drift_balance_generic(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
-                                                      drain_cols, pinned_col, drain_basis, reg_basis, force_floor)
+                                                      drain_cols, pinned_col, drain_basis, reg_basis, force_floor, force_multiplier)
 % DRIFT_BALANCE_GENERIC  Reusable core of the drift-balance calculation.
 %
 %   [pin_val, pin_var] = DRIFT_BALANCE_GENERIC(XiN_smooth, XiN_var, vi, ...
 %                             col_scale, target_scale, drain_cols, pinned_col, ...
 %                             drain_basis, reg_basis)
 %   [...] = DRIFT_BALANCE_GENERIC(..., force_floor)
+%   [...] = DRIFT_BALANCE_GENERIC(..., force_floor, force_multiplier)
 %
 % Every drift_balance_<system>.m file (Hes1, Goodwin, NF-kB, ...) does
 % the same three things for each regulatory term: read the currently-
@@ -37,6 +38,16 @@ function [pin_val, pin_var] = drift_balance_generic(XiN_smooth, XiN_var, vi, col
 %                over the data -- e.g. hill_func(y_tau).
 %   force_floor  (optional) floor on the average regulatory basis
 %                magnitude, to avoid dividing by ~0. Default 1e-3.
+%   force_multiplier  (optional) scalar multiplier applied to the drain
+%                magnitude before dividing by the regulatory basis.
+%                This is a convergence aid: if a drift-balance fit is
+%                struggling to settle (the pinned coefficient consistently
+%                lands short of where it needs to be), nudging this away
+%                from 1 can push the balance calculation in the right
+%                direction -- e.g. NF-kB's script uses 1.05. Not a
+%                per-system constant to leave untouched; treat it as a
+%                knob to reach for on a new system before assuming
+%                something else is wrong. Default 1 (no adjustment).
 %
 % OUTPUTS
 %   pin_val, pin_var   scalars, already in NORMALIZED (XiN) space --
@@ -61,6 +72,7 @@ function [pin_val, pin_var] = drift_balance_generic(XiN_smooth, XiN_var, vi, col
 % See also: risindy, drift_balance_template.
 
     if nargin < 10, force_floor = 1e-3; end
+    if nargin < 11, force_multiplier = 1; end
 
     n_drain = numel(drain_cols);
     cx      = zeros(n_drain, 1);
@@ -70,7 +82,7 @@ function [pin_val, pin_var] = drift_balance_generic(XiN_smooth, XiN_var, vi, col
 
     avg_drain   = mean(abs(drain_basis * cx));
     h_basis_avg = mean(reg_basis);
-    force_phys  = avg_drain / max(h_basis_avg, force_floor);
+    force_phys  = (force_multiplier * avg_drain) / max(h_basis_avg, force_floor);
 
     pin_val = (force_phys * col_scale(pinned_col)) / target_scale(vi);
 
