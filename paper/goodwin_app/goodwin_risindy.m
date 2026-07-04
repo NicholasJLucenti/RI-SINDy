@@ -20,19 +20,20 @@
 %  any run we've checked.
 % =========================================================================
 
-close all; clc;
+clear; close all; clc;
 thisDir = fileparts(mfilename('fullpath'));
 addpath(genpath(fullfile(thisDir, '..', '..', 'src')));
 
 %% --- PARAMETERS -----------------------------------------------------------
 dt      = 0.05;
-N       = 300;
+N       = 200;
 hill_n  = 3;
 hill_k0 = 2;
 hill_km = 1.0;
 
 hill_rep = @(z, k, n)  k^n ./ (k^n + z.^n);
 hill_deg = @(y, km)    y   ./ (km  + y);
+force_multiplier = 1;   % drift-balance convergence-aid knob (see drift_balance_goodwin.m); 1 = no adjustment
 
 % Ground-truth parameters, used only to simulate synthetic data and to
 % print a side-by-side comparison against what RI-SINDy recovers.
@@ -88,19 +89,19 @@ Theta_tr = [build_poly_library(x_data, y_data, z_data, 3), ...
 %% --- CONSTRAINTS --------------------------------------------------------
 % Column order: [1, x, x^2, x^3, y, y^2, y^3, z, z^2, z^3] (HillRep and
 % HillDeg are columns 11-12, pinned -- never enter these bounds).
-lb{1} = [ 0, -inf, -inf, -inf,    0,    0,    0,    0,    0,    0];   % mRNA equation
-ub{1} = [ 0,    0,    0,    0,    0,    0,    0,    0,    0,    0];
-lb{2} = [ 0,    2,    0,    0,    0,    0,    0,    0,    0,    0];   % protein equation
-ub{2} = [ 0,  inf,    0,    0,    0,    0,    0,    0,    0,    0];
+lb{1} = [ 0, -inf, -inf, -inf,    -inf,    -inf,    -inf,    -inf,    -inf,    -inf];   % mRNA equation
+ub{1} = [ 0,    -1,    0,    0,    0,    0,    0,    0,    0,    0];
+lb{2} = [ 0,    1,    -inf,    -inf,    0,    0,    0,    0,    0,    0];   % protein equation
+ub{2} = [ 0,  inf,    inf,    inf,    inf,    inf,    inf,    inf,    inf,    inf];
 lb{3} = [ 0,    0,    0,    0,    0,    0,    0, -inf, -inf, -inf];   % repressor equation
-ub{3} = [ 0,    0,    0,    0,  inf,  inf,  inf,    0,    0,    0];
+ub{3} = [ 0,    inf,    inf,    inf,  inf,  inf,  inf,    inf,    inf,    inf];
 
 pinned_col = [11, 12];   % HillRep(z), HillDeg(y)
 
 %% --- DRIFT-BALANCE FUNCTION -----------------------------------------------
 drift_fn = @(XiN_smooth, XiN_var, vi, col_scale, target_scale) ...
     drift_balance_goodwin(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
-                           x_data, y_data, z_data, hill_k0, hill_n, hill_km);
+                           x_data, y_data, z_data, hill_k0, hill_n, hill_km, force_multiplier);
 
 %% --- FIT ----------------------------------------------------------------
 opts = struct();
@@ -118,7 +119,7 @@ opts.prior_params     = struct('tau0', 0.05, 'eps_sparsity', 1e-3);
 % Final hard threshold on the identified physical coefficients -- this
 % is an extra cleanup step applied AFTER risindy.m's own sparsification,
 % not something risindy.m does internally.
-threshold = 0.005;
+threshold = 0.1;
 Xi(abs(Xi) < threshold) = 0;
 
 %% --- RESULTS ----------------------------------------------------------
@@ -145,6 +146,13 @@ rhs = @(xp,yp,zp) [poly_library_row(xp,yp,zp,3), hill_rep(zp,hill_k0,hill_n), hi
 [x_id, y_id, z_id] = forward_integrate_goodwin(rhs, n_all, dt, x_data(1), y_data(1), z_data(1));
 
 %% --- PLOTS ----------------------------------------------------------------
+figure('Color','w');
+plot3(x_data_all, y_data_all, z_data_all, 'b-', 'LineWidth', 0.8); hold on;
+plot3(x_id, y_id, z_id, 'r--', 'LineWidth', 1.5);
+xlabel('x (mRNA)'); ylabel('y (Protein)'); zlabel('z (Repressor)');
+title('Phase Portrait Goodwin'); grid on;
+legend('Synthetic data','RI-SINDy model','Location','northeast');
+
 figure;
 subplot(3,1,1);
 plot(t_all, x_data_all,'b','LineWidth',1.5); hold on;
@@ -165,13 +173,6 @@ xline(N*dt,'k:');
 xlabel('Time'); ylabel('z (repressor)');
 legend('Data','Identified'); grid on; box on;
 sgtitle('RI-SINDy Goodwin Oscillator');
-
-figure('Color','w');
-plot3(x_data_all, y_data_all, z_data_all, 'b-', 'LineWidth', 0.8); hold on;
-plot3(x_id, y_id, z_id, 'r--', 'LineWidth', 1.5);
-xlabel('x (mRNA)'); ylabel('y (Protein)'); zlabel('z (Repressor)');
-title('Phase Portrait Goodwin'); grid on;
-legend('Synthetic data','RI-SINDy model','Location','northeast');
 
 %% --- ERROR METRICS ------------------------------------------------------
 clip = @(v) min(max(v, -1e6), 1e6);   % prevent divergent trajectories from producing Inf metrics

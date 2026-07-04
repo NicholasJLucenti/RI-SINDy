@@ -107,11 +107,12 @@ Theta_tr = [ ones(N,1), signal_train, ...
 % equations) is forced to exactly zero via lb=ub=0, reproducing the
 % original script's use of two separate, smaller library matrices.
 lb{1} = [0, 0, -inf, -inf, -inf, -inf, -inf, -inf,   0,   0,   0, -inf];   % x equation
-ub{1} = [0, inf,   0,    0,    0,    0,    0,    0,   0,   0,   0,    0];
-lb{2} = [0, 0,    0,    0,    0, -inf, -inf, -inf,   0,   0,   0, -inf];   % y equation
-ub{2} = [inf, 0, inf,  inf,  inf,    0,    0,    0,   0,   0,   0,    0];
-lb{3} = [0, 0, -inf, -inf, -inf,   0,   0,   0, -inf, -inf, -inf,    0];   % z equation
-ub{3} = [inf, 0,   0,    0,    0,   0,   0,   0,    0,    0,    0,    0];
+ub{1} = [0, inf,   0,    0,    0,    inf,    inf,    inf,   inf,   inf,   inf,    0];
+lb{2} = [-inf, 0,    0,    0,    0, -inf, -inf, -inf,   0,   0,   0, -inf];   % y equation
+ub{2} = [inf, 0, inf,  inf,  inf,    0,    0,    0,   inf,   inf,   inf,    0];
+lb{3} = [-inf, 0, -inf, -inf, -inf,   0,   0,   0, -inf, -inf, -inf,    0];   % z equation
+ub{3} = [inf, 0,   0,    0,    0,   0,   0,   0,    inf,    inf,    inf,    0];
+
 
 pinned_col = 13;   % Hill(x)
 
@@ -132,6 +133,12 @@ opts.prior       = 'SpikeSlab';   % matches default; explicit for clarity
 opts.prior_params = struct('v0', 1e-4, 'v1', 1.0);
 
 [Xi, Xi_var, diagnostics] = risindy(Theta_tr, dXdt_tr, drift_fn, pinned_col, lb, ub, opts); %#ok<ASGLU>
+
+% Final hard threshold on the identified physical coefficients -- this
+% is an extra cleanup step applied AFTER risindy.m's own sparsification,
+% not something risindy.m does internally.
+threshold = 0.2;
+Xi(abs(Xi) < threshold) = 0;
 
 %% --- RESULTS ----------------------------------------------------------
 fprintf('==========================================\n');
@@ -157,7 +164,8 @@ fprintf(' the y equation, matching the original script.)\n');
 
 %% --- FORWARD INTEGRATION ------------------------------------------------
 rhs = @(xp,yp,zp,sp) [1, sp, xp, xp^2, xp^3, yp, yp^2, yp^3, zp, zp^2, zp^3, xp*yp, hill_act(xp,hill_k0,hill_n)] * Xi;
-[x_id, y_id, z_id] = forward_integrate_nfkb(rhs, t_all, signal_all, x_data_all(1), y_data_all(1), z_data_all(1), dt);
+Xhat = forward_integrate_nfkb(rhs, t_all, signal_all, x_data_all(1), y_data_all(1), z_data_all(1), dt);
+x_id = Xhat(:,1); y_id = Xhat(:,2); z_id = Xhat(:,3);
 
 %% --- FIT METRICS ------------------------------------------------------
 eval_start = round(0.1 * N);
@@ -181,6 +189,15 @@ draw_fn = @(Xi_s) forward_integrate_nfkb( ...
     t_all, signal_all, x_data_all(1), y_data_all(1), z_data_all(1), dt);
 addpath(genpath(fullfile(thisDir, '..', 'comparisons', 'utils')));
 [Xenv_lo, Xenv_hi] = mc_uq_propagate(draw_fn, Xi, Xi_var, 500);
+
+%% --- PLOT: phase portrait -----------------------------------------------
+figure('Color','w');
+plot3(x_data_all, y_data_all, z_data_all, 'b-', 'LineWidth',0.8); hold on;
+plot3(x_id, y_id, z_id, 'r--', 'LineWidth',1.5);
+xlabel('x (NF-\kappaB)'); ylabel('y (I\kappaB)'); zlabel('z (mRNA)');
+title('Phase Portrait: NF-\kappaB'); legend('Synthetic data','RI-SINDy model','Location','northeast');
+grid on; view(35,25);
+
 
 %% --- PLOTS: time-series fit with UQ bands ---------------------------------
 figure('Color','w');
@@ -208,21 +225,13 @@ for s = 1:3
     box on; set(gca,'Color','w','TickDir','out','FontSize',8);
 end
 
-%% --- PLOT: phase portrait -----------------------------------------------
-figure('Color','w');
-plot3(x_data_all, y_data_all, z_data_all, 'b-', 'LineWidth',0.8); hold on;
-plot3(x_id, y_id, z_id, 'r--', 'LineWidth',1.5);
-xlabel('x (NF-\kappaB)'); ylabel('y (I\kappaB)'); zlabel('z (mRNA)');
-title('Phase Portrait: NF-\kappaB'); legend('Synthetic data','RI-SINDy model','Location','northeast');
-grid on; view(35,25);
-
 
 %% =========================================================================
 %  FORWARD INTEGRATION (plain Euler step, time-varying signal S(t) --
 %  kept local, same pattern as Hes1/Goodwin's local forward-integration
 %  helpers)
 %% =========================================================================
-function [x_id, y_id, z_id] = forward_integrate_nfkb(rhsfun, t_all, signal_all, x0, y0, z0, dt)
+function Xhat = forward_integrate_nfkb(rhsfun, t_all, signal_all, x0, y0, z0, dt)
     n_all = numel(t_all);
     x_id = zeros(n_all,1); x_id(1) = x0;
     y_id = zeros(n_all,1); y_id(1) = y0;
@@ -235,4 +244,5 @@ function [x_id, y_id, z_id] = forward_integrate_nfkb(rhsfun, t_all, signal_all, 
         y_id(k) = yp + dt*dxyz(2);
         z_id(k) = zp + dt*dxyz(3);
     end
+    Xhat = [x_id, y_id, z_id];
 end

@@ -1,5 +1,5 @@
 function [pin_val, pin_var] = drift_balance_goodwin(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
-                                                      x_data, y_data, z_data, hill_k0, hill_n, hill_km)
+                                                      x_data, y_data, z_data, hill_k0, hill_n, hill_km, force_multiplier)
 % DRIFT_BALANCE_GOODWIN  Goodwin-specific drift-balance function: two
 % independent regulatory terms, each assigned to a different equation.
 %   - HillRep(z) (column 11) balances the mRNA equation's drain terms
@@ -12,10 +12,18 @@ function [pin_val, pin_var] = drift_balance_goodwin(XiN_smooth, XiN_var, vi, col
 %   [pin_val, pin_var] = DRIFT_BALANCE_GOODWIN(XiN_smooth, XiN_var, vi, ...
 %                             col_scale, target_scale, x_data, y_data, z_data, ...
 %                             hill_k0, hill_n, hill_km)
+%   [...] = DRIFT_BALANCE_GOODWIN(..., force_multiplier)
 %
 % Library column layout this expects (see goodwin_risindy.m):
 %   [1, x, x^2, x^3, y, y^2, y^3, z, z^2, z^3, HillRep(z), HillDeg(y)]
 %                                                11           12
+%
+% force_multiplier  (optional) convergence-aid knob passed straight
+%                    through to drift_balance_generic.m for BOTH
+%                    regulatory terms -- same mechanism as NF-kB's
+%                    drift_balance_nfkb.m, added here on request so it's
+%                    a parameter to sweep/tune rather than something to
+%                    hand-edit into the file. Default 1 (no adjustment).
 %
 % Returns a 2-element pin_val/pin_var (one entry per pinned column, in
 % the order [HillRep(z); HillDeg(y)]), with 0 for whichever regulatory
@@ -23,8 +31,11 @@ function [pin_val, pin_var] = drift_balance_goodwin(XiN_smooth, XiN_var, vi, col
 %
 % See also: drift_balance_generic, risindy, goodwin_risindy.
 
+    if nargin < 12, force_multiplier = 1; end
+
     pin_val = zeros(2,1);
     pin_var = zeros(2,1);
+    force_floor = 1e-3;   % drift_balance_generic.m's own default, made explicit here since force_multiplier is now passed after it
 
     switch vi
         case 1   % mRNA equation: HillRep(z) balances the drain (x, x^2, x^3)
@@ -32,7 +43,8 @@ function [pin_val, pin_var] = drift_balance_goodwin(XiN_smooth, XiN_var, vi, col
             drain_basis = [x_data, x_data.^2, x_data.^3];
             reg_basis   = (hill_k0^hill_n) ./ (hill_k0^hill_n + z_data.^hill_n);
             [pv, pr] = drift_balance_generic(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
-                                              drain_cols, 11, drain_basis, reg_basis);
+                                              drain_cols, 11, drain_basis, reg_basis, ...
+                                              force_floor, force_multiplier);
             pin_val(1) = pv;
             pin_var(1) = pr;
 
@@ -41,7 +53,8 @@ function [pin_val, pin_var] = drift_balance_goodwin(XiN_smooth, XiN_var, vi, col
             drain_basis = [x_data, x_data.^2, x_data.^3];
             reg_basis   = y_data ./ (hill_km + y_data);
             [pv, pr] = drift_balance_generic(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
-                                              drain_cols, 12, drain_basis, reg_basis);
+                                              drain_cols, 12, drain_basis, reg_basis, ...
+                                              force_floor, force_multiplier);
             % HillDeg is a LOSS term here (degradation), so its
             % coefficient must be negative even though the balance
             % magnitude computed above is always non-negative.

@@ -51,7 +51,7 @@ function [pin_val, pin_var] = drift_balance_nfkb(XiN_smooth, XiN_var, vi, col_sc
     reg_basis   = (x_data.^hill_n) ./ (hill_k0^hill_n + x_data.^hill_n);   % activation form
 
     force_floor      = 1e-3;
-    force_multiplier = 1.05;   % preserved from the original script
+    force_multiplier = 1.1;   % preserved from the original script
 
     [pin_val, pin_var] = drift_balance_generic(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
                                                 drain_cols, pinned_col, drain_basis, reg_basis, ...
