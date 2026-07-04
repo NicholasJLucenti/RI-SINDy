@@ -39,7 +39,7 @@
 clear; close all; clc;
 thisDir = fileparts(mfilename('fullpath'));
 addpath(genpath(fullfile(thisDir, '..', '..', 'src')));
-addpath(genpath(fullfile(thisDir, '..', 'goodwin')));
+addpath(genpath(fullfile(thisDir, '..', 'goodwin_app')));
 addpath(genpath(fullfile(thisDir, '..', 'comparisons', 'utils')));
 addpath(genpath(fullfile(thisDir, 'utils')));
 
