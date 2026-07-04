@@ -26,7 +26,7 @@
 %  near-duplicate black-background figures the original produced.
 % =========================================================================
 
-close all; clc;
+clear; close all; clc;
 thisDir = fileparts(mfilename('fullpath'));
 addpath(genpath(fullfile(thisDir, '..', '..', 'src')));
 addpath(genpath(fullfile(thisDir, '..', 'comparisons', 'utils')));

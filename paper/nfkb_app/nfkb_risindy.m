@@ -28,7 +28,7 @@
 %  abs(mean(...)), matching the correction already applied project-wide.
 % =========================================================================
 
-close all; clc;
+clear; close all; clc;
 thisDir = fileparts(mfilename('fullpath'));
 addpath(genpath(fullfile(thisDir, '..', '..', 'src')));
 
