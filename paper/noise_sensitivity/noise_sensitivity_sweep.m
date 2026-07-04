@@ -14,7 +14,7 @@
 %  GROUND-TRUTH TERM COUNT FLAG: the paper text and the existing
 %  noise_sensitivity_heatmap.m both say 7 correct terms at 0% noise.
 %  The Goodwin model implemented throughout this repo (see
-%  paper/goodwin/goodwin_risindy.m) has only 6 nonzero ground-truth
+%  paper/goodwin_app/goodwin_risindy.m) has only 6 nonzero ground-truth
 %  terms: x and Hrep(z) in the x-equation, x and Hdeg(y) in the
 %  y-equation, y and z in the z-equation. gt_mask below reflects that
 %  6-term model. If the noise-sensitivity test in the paper used a
@@ -48,9 +48,28 @@ noise_levels   = [0, 0.05, 0.10, 0.15];
 noiseLabels    = {'0%','5%','10%','15%'};
 methodLabels   = {'SINDy','E-SINDy','RI-SINDy'};
 n_boot_esindy  = 100;
-incl_threshold = 0.5;
-term_threshold = 1e-3;   % magnitude below which a coefficient counts as "not identified"
+incl_threshold = 0.5;    % E-SINDy: fraction of bootstraps a term must survive in to be kept
+term_threshold = 1e-3;   % magnitude below which a coefficient counts as "not identified" (for scoring only)
 rng_seed_base  = 100;    % each noise level gets rng_seed_base + noise_index, for reproducibility
+
+% Sparsity thresholds for the two baseline methods on THIS system, ONE
+% VALUE PER NOISE LEVEL (same order as noise_levels above) -- tune these
+% here if Traditional SINDy / E-SINDy are over- or under-fitting on
+% Goodwin at a specific noise level. A common pattern is ramping these
+% up as noise increases, since more noise means more small spurious
+% coefficients need a higher bar to get filtered out. goodwin_comparisons.m
+% and nfkb_comparisons.m keep using run_traditional_sindy_3d.m's own
+% single default (0.1) since they don't pass a value -- changing these
+% arrays here has no effect on those scripts.
+trad_sindy_lambda_by_noise   = [1, 0.5, 1, 1];   % passed to run_traditional_sindy_3d.m's lambda argument
+esindy_stlsq_lambda_by_noise = [1, 1, 1, 2];   % passed to run_ensemble_sindy_3d.m's per-bootstrap STLSQ threshold
+
+if numel(trad_sindy_lambda_by_noise) ~= numel(noise_levels) || ...
+   numel(esindy_stlsq_lambda_by_noise) ~= numel(noise_levels)
+    error('noise_sensitivity_sweep:lambdaMismatch', ...
+          'trad_sindy_lambda_by_noise and esindy_stlsq_lambda_by_noise must each have exactly one entry per noise level (%d).', ...
+          numel(noise_levels));
+end
 
 col_names = {'1','x','x^2','x^3','y','y^2','y^3','z','z^2','z^3','Hrep(z)','Hdeg(y)'};
 
@@ -66,12 +85,22 @@ correctTerms  = NaN(numel(noise_levels), 3);
 spuriousTerms = NaN(numel(noise_levels), 3);
 relL2         = NaN(numel(noise_levels), 3);
 
+% Full identified coefficient matrices, kept for the diagnostic
+% visualization block at the end of this script -- Xi_all{ni, m} is the
+% [12 x 3] Xi from method m (1=Traditional SINDy, 2=E-SINDy, 3=RI-SINDy)
+% at noise level ni.
+Xi_all = cell(numel(noise_levels), 3);
+
 %% --- SWEEP --------------------------------------------------------------
 for ni = 1:numel(noise_levels)
     noise = noise_levels(ni);
     rng(rng_seed_base + ni);
 
-    fprintf('=== Noise level %s ===\n', noiseLabels{ni});
+    trad_sindy_lambda   = trad_sindy_lambda_by_noise(ni);
+    esindy_stlsq_lambda = esindy_stlsq_lambda_by_noise(ni);
+
+    fprintf('=== Noise level %s (trad_lambda=%.3f, esindy_lambda=%.3f) ===\n', ...
+            noiseLabels{ni}, trad_sindy_lambda, esindy_stlsq_lambda);
 
     [t, Xtrue, Xnoisy, p, N_train] = generate_goodwin_data_sweep(noise);
     fitIdx = 1:N_train;
@@ -82,7 +111,8 @@ for ni = 1:numel(noise_levels)
     X0 = Xtrue(1, :);
 
     %% --- Traditional SINDy ---
-    Xi_trad = run_traditional_sindy_3d(libFun, Xfit, t(fitIdx), dXdt_fit);
+    Xi_trad = run_traditional_sindy_3d(libFun, Xfit, t(fitIdx), dXdt_fit, trad_sindy_lambda);
+    Xi_all{ni, 1} = Xi_trad;
     rhs_trad = @(tt, X) (libFun(X', tt) * Xi_trad)';
     Xhat_trad = integrate_model(rhs_trad, t, X0);
     [correctTerms(ni,1), spuriousTerms(ni,1), relL2(ni,1)] = ...
@@ -92,7 +122,8 @@ for ni = 1:numel(noise_levels)
 
     %% --- E-SINDy ---
     Xi_ens = run_ensemble_sindy_3d(libFun, Xfit, t(fitIdx), dXdt_fit, ...
-                                    n_boot_esindy, incl_threshold, 0.1);
+                                    n_boot_esindy, incl_threshold, esindy_stlsq_lambda);
+    Xi_all{ni, 2} = Xi_ens;
     rhs_ens = @(tt, X) (libFun(X', tt) * Xi_ens)';
     Xhat_ens = integrate_model(rhs_ens, t, X0);
     [correctTerms(ni,2), spuriousTerms(ni,2), relL2(ni,2)] = ...
@@ -101,22 +132,29 @@ for ni = 1:numel(noise_levels)
             correctTerms(ni,2), spuriousTerms(ni,2), relL2(ni,2));
 
     %% --- RI-SINDy (refit fresh at this noise level -- NOT hardcoded) ---
+    % Bounds, N, and threshold below now match the debugged
+    % paper/goodwin_app/goodwin_risindy.m (pulled from the repo) rather
+    % than the original tighter bounds this sweep started with -- most
+    % zero bounds loosened to let sparsity decide, per the same fine-
+    % tuning already applied to the paper driver.
     x_data = Xfit(:,1); y_data = Xfit(:,2); z_data = Xfit(:,3);
     Theta_tr = [build_poly_library(x_data, y_data, z_data, 3), ...
                 (p.K0^p.n) ./ (p.K0^p.n + z_data.^p.n), ...
                 y_data ./ (p.Km + y_data)];
 
-    lb{1} = [ 0, -inf, -inf, -inf,    0,    0,    0,    0,    0,    0];
-    ub{1} = [ 0,    0,    0,    0,    0,    0,    0,    0,    0,    0];
-    lb{2} = [ 0,    2,    0,    0,    0,    0,    0,    0,    0,    0];
-    ub{2} = [ 0,  inf,    0,    0,    0,    0,    0,    0,    0,    0];
-    lb{3} = [ 0,    0,    0,    0,    0,    0,    0, -inf, -inf, -inf];
-    ub{3} = [ 0,    0,    0,    0,  inf,  inf,  inf,    0,    0,    0];
+    force_multiplier = 1;   % matches goodwin_risindy.m -- see that file's note on why it stays at 1
+
+    lb{1} = [ 0, -inf, -inf, -inf, -inf, -inf, -inf, -inf, -inf, -inf];   % mRNA equation
+    ub{1} = [ 0,   -1,    0,    0,    0,    0,    0,    0,    0,    0];
+    lb{2} = [ 0,    1, -inf, -inf,    0,    0,    0,    0,    0,    0];   % protein equation
+    ub{2} = [ 0,  inf,  inf,  inf,  inf,  inf,  inf,  inf,  inf,  inf];
+    lb{3} = [ 0,    0,    0,    0,    0,    0,    0, -inf, -inf, -inf];   % repressor equation
+    ub{3} = [ 0,  inf,  inf,  inf,  inf,  inf,  inf,  inf,  inf,  inf];
     pinned_col = [11, 12];
 
     drift_fn = @(XiN_smooth, XiN_var, vi, col_scale, target_scale) ...
         drift_balance_goodwin(XiN_smooth, XiN_var, vi, col_scale, target_scale, ...
-                               x_data, y_data, z_data, p.K0, p.n, p.Km);
+                               x_data, y_data, z_data, p.K0, p.n, p.Km, force_multiplier);
 
     opts = struct();
     opts.eta_pin      = 0.6;
@@ -129,7 +167,8 @@ for ni = 1:numel(noise_levels)
     opts.prior_params = struct('tau0', 0.05, 'eps_sparsity', 1e-3);
 
     Xi_ri = risindy(Theta_tr, dXdt_fit, drift_fn, pinned_col, lb, ub, opts);
-    Xi_ri(abs(Xi_ri) < 0.005) = 0;   % same post-hoc cleanup as goodwin_risindy.m
+    Xi_ri(abs(Xi_ri) < 0.1) = 0;   % matches goodwin_risindy.m's updated post-hoc threshold (was 0.005)
+    Xi_all{ni, 3} = Xi_ri;
 
     rhs_ri = @(tt, X) (libFun(X', tt) * Xi_ri)';
     Xhat_ri = integrate_model(rhs_ri, t, X0);
@@ -160,9 +199,53 @@ plot_metric_heatmap(spuriousTerms, noiseLabels, methodLabels, ...
 
 subplot(1,3,3)
 plot_metric_heatmap(relL2, noiseLabels, methodLabels, ...
-    'Relative L_2 Error', 'orange_white', [], [0, 0.6]);
+    'Relative L_2 Error', 'orange_white', [], [0, 2]);
 
 sgtitle('Goodwin Oscillator: Noise Sensitivity (live sweep)', 'FontSize', 11, 'FontWeight', 'normal');
+
+
+%% =========================================================================
+%  DIAGNOSTIC: IDENTIFIED EQUATIONS AT EACH NOISE LEVEL
+%
+%  Two views of the same information, for debugging which specific
+%  terms each method gets right/wrong at each noise level:
+%   1. A printed side-by-side equation listing -- easiest to actually
+%      read the numbers off.
+%   2. A heatmap grid (one row block per equation, one column per
+%      method x noise-level combination) -- easiest to see AT A GLANCE
+%      which terms are consistently on/off vs. which ones flicker.
+%      Ground-truth terms are marked with a black box outline so a
+%      spurious term lighting up somewhere it shouldn't is immediately
+%      visible.
+%% =========================================================================
+
+%% --- 1. Printed equation listing ---
+fprintf('\n==========================================\n');
+fprintf('  IDENTIFIED EQUATIONS AT EACH NOISE LEVEL\n');
+fprintf('==========================================\n');
+eq_names = {'dx/dt (mRNA)', 'dy/dt (protein)', 'dz/dt (repressor)'};
+for ni = 1:numel(noise_levels)
+    fprintf('\n--- Noise level %s ---\n', noiseLabels{ni});
+    for m = 1:3
+        fprintf('  [%s]\n', methodLabels{m});
+        Xi_this = Xi_all{ni, m};
+        for eq = 1:3
+            terms = '';
+            for c = 1:numel(col_names)
+                if abs(Xi_this(c, eq)) > term_threshold
+                    if isempty(terms)
+                        terms = sprintf('%+.4f*%s', Xi_this(c,eq), col_names{c});
+                    else
+                        terms = sprintf('%s %+.4f*%s', terms, Xi_this(c,eq), col_names{c});
+                    end
+                end
+            end
+            if isempty(terms), terms = '(all zero)'; end
+            fprintf('    %s = %s\n', eq_names{eq}, terms);
+        end
+    end
+end
+
 
 
 %% =========================================================================
@@ -194,7 +277,7 @@ function [t, Xtrue, Xnoisy, p, N_train] = generate_goodwin_data_sweep(noise_leve
     p.kz    = 1.5;  p.dz = 0.8;
 
     dt = 0.05;
-    N_train = 300;
+    N_train = 200;   % matches goodwin_risindy.m's debugged N (was 300)
     n_total = N_train + 200;
 
     rhs = @(tt,X) goodwin_rhs_sweep(X, p);
