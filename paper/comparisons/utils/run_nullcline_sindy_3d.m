@@ -51,7 +51,13 @@ function [score, Xi] = nullcline_obj_3d(off, libFun, X, t, dXdt, trIdx, valIdx, 
     nEq = size(dY_tr,2);
     p = size(Theta_tr,2);
 
-    colscale = vecnorm(Theta_tr,2,1); colscale(colscale==0) = 1;
+    % Floor near-zero column norms, same safeguard already used in every
+    % SR3 fit in this repo (see colscale_floor.m) -- without this, a
+    % library column that happens to collapse to near-zero norm at a
+    % given phase-space offset causes ThetaN's column to blow up after
+    % normalization, and the coefficient explodes again when converted
+    % back to physical scale via division by colscale.
+    colscale = colscale_floor(vecnorm(Theta_tr,2,1));
     ThetaN = Theta_tr ./ colscale;
 
     Xi = zeros(p,nEq);
@@ -59,7 +65,17 @@ function [score, Xi] = nullcline_obj_3d(off, libFun, X, t, dXdt, trIdx, valIdx, 
         ys_ = dY_tr(:,eq);
         scaleY = norm(ys_,2); if scaleY==0, scaleY=1; end
         ysN = ys_/scaleY;
-        xi = ThetaN \ ysN;
+
+        % Ridge-regularized solve instead of a plain backslash. NF-kB's
+        % library is severely collinear (see paper Discussion); an
+        % unregularized least squares on a near-singular submatrix is
+        % free to return enormous, near-canceling coefficient pairs that
+        % fit the training/validation window but diverge catastrophically
+        % under forward integration. The ridge strength is scaled to the
+        % submatrix's own average diagonal magnitude so it stays small
+        % relative to well-conditioned fits and only intervenes when
+        % columns are genuinely near-collinear.
+        xi = ridge_solve(ThetaN, ysN);
         for it = 1:10
             small = abs(xi) < 0.1;
             if ownRegIdx(eq) > 0
@@ -70,7 +86,7 @@ function [score, Xi] = nullcline_obj_3d(off, libFun, X, t, dXdt, trIdx, valIdx, 
                 xi = zeros(size(xi)); break;
             end
             xi = zeros(size(xi));
-            xi(big) = ThetaN(:,big) \ ysN;
+            xi(big) = ridge_solve(ThetaN(:,big), ysN);
         end
         Xi(:,eq) = (xi*scaleY) ./ colscale';
     end
@@ -82,5 +98,21 @@ function [score, Xi] = nullcline_obj_3d(off, libFun, X, t, dXdt, trIdx, valIdx, 
     sstot = sum((actual-mean(actual,1)).^2,'all');
     R2 = 1 - ssres/max(sstot,1e-8);
     complexity = nnz(abs(Xi)>1e-6);
-    score = (1-R2) + 0.01*complexity;
+
+    % Coefficient-magnitude penalty: without this, fminsearch's offset
+    % search has no signal telling it that an offset producing enormous,
+    % near-canceling coefficients is undesirable, even though such an
+    % offset can score well on R^2 alone by exploiting a locally
+    % near-singular fit. This keeps the search away from those offsets.
+    magnitude_penalty = 1e-5 * sum(Xi(:).^2);
+    score = (1-R2) + 0.01*complexity + magnitude_penalty;
+end
+
+function xi = ridge_solve(A, y)
+    % Small, scale-aware ridge regression: regularization strength is
+    % set relative to the submatrix's own average diagonal magnitude,
+    % so it stays negligible for well-conditioned fits and only
+    % intervenes when columns are genuinely near-collinear.
+    lambda_ridge = 1e-3 * trace(A'*A) / max(size(A,2), 1);
+    xi = (A'*A + lambda_ridge*eye(size(A,2))) \ (A'*y);
 end

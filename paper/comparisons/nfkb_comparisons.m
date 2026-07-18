@@ -1,11 +1,28 @@
 %% =========================================================================
 %  NF-kB Inflammatory Signaling Network
+%  RI-SINDy (hardcoded, from a standalone nfkb_risindy.m run)  vs
 %  SR3 (parametric-library, Champion et al. 2020)  vs
 %  Nullcline-Reconstruction SINDy (Prokop, Frolov & Gelens 2024)  vs
 %  Traditional SINDy (plain STLSQ, naive baseline)
 %
-%  RI-SINDy is NOT fit here -- its coefficients are hardcoded from the
-%  already-published table for forward integration and comparison only.
+%  RI-SINDy is NOT fit inside this script. Its coefficients come from a
+%  standalone run of paper/nfkb_app/nfkb_risindy.m (the canonical
+%  fitting script) and are hardcoded below, permuted into this script's
+%  library column order, and only forward-integrated here for
+%  comparison. This avoids running risindy.m twice per comparison run.
+%
+%  ----------------------------------------------------------------------
+%  IMPLEMENTATION NOTE -- library column order mismatch:
+%
+%  nfkb_risindy.m (and drift_balance_nfkb.m, which it depends on) use a
+%  DIFFERENT column order than this script's own library (nameLib,
+%  used by SR3/Nullcline-SINDy/Traditional SINDy/forward integration/
+%  error metrics/plotting below):
+%     nfkb_risindy.m order:  [1, S, x, x^2, x^3, y, y^2, y^3, z, z^2, z^3, x*y, Hill(x)]
+%     nameLib order:         [1, x, x^2, x^3, y, y^2, y^3, z, z^2, z^3, x*y, S(t), Hx]
+%  See the detailed comment above the hardcoded Xi_ri block below for
+%  the exact permutation applied.
+%  ----------------------------------------------------------------------
 %
 %  Requires: Optimization Toolbox (lsqnonlin, fminsearch)
 %
@@ -51,7 +68,7 @@ addpath(genpath(fullfile(thisDir, '..', '..', 'src')));
 set(0,'DefaultFigureWindowStyle','docked');
 
 fprintf('=========================================================\n');
-fprintf(' NF-kB Network: SR3 vs Nullcline-SINDy vs Traditional SINDy\n');
+fprintf(' NF-kB Network: RI-SINDy vs SR3 vs Nullcline-SINDy vs Traditional SINDy\n');
 fprintf('=========================================================\n');
 
 sysDisplayName = 'NF-\kappaB Network';
@@ -62,49 +79,9 @@ libFun     = @(X,tt) lib_nfkb(X, tt, p.K0, p.n, p.S0, p.r);
 nameLib    = {'1','x','x^2','x^3','y','y^2','y^3','z','z^2','z^3','x*y','S(t)','Hx'};
 stateNames = {'NF-\kappaB (x)','I\kappaB (y)','IKK (z)'};
 
-% Updated to the fuller, more recent RI-SINDy run: dx/dt now includes a
-% y term, dy/dt now includes both x^2 and x^3.
-Xi_ri = [   0,        0,       0      ; ...  % 1
-           -0.3543,   0,       0      ; ...  % x
-            0,        0.5455,  0      ; ...  % x^2
-            0,        0.0398,  0      ; ...  % x^3
-           -0.0181,  -0.1066,  0      ; ...  % y
-            0,        0,       0      ; ...  % y^2
-            0,        0,       0      ; ...  % y^3
-            0,        0,      -0.8402 ; ...  % z
-            0,        0,       0      ; ...  % z^2
-            0,        0,       0      ; ...  % z^3
-           -1.1084,   0,       0      ; ...  % x*y
-            0.9371,   0,       0      ; ...  % S(t)
-            0,        0,       8.4889 ];      % Hx
-
-% Posterior standard deviations, reshaped from the dedicated RI-SINDy
-% run. The reshape was cross-checked against the x^2/eq2 entry
-% (0.2111), which matches the previously published anomalous value for
-% that exact term, confirming the ordering. The z, z^2, z^3 rows were
-% not present in what was provided and default to zero pending that
-% data; everything else below is populated with real values.
-Xi_ri_std = [ 0.0072, 0.0111, 0.0104 ; ...  % 1
-              0.0486, 0.0213, 0.0211 ; ...  % x
-              0.0102, 0.2111, 0.0155 ; ...  % x^2
-              0.0054, 0.1092, 0.0082 ; ...  % x^3
-              0.0202, 0.0284, 0.0277 ; ...  % y
-              0.0016, 0.0024, 0.0041 ; ...  % y^2
-              0.0004, 0.0006, 0.0011 ; ...  % y^3
-              0,      0,      0      ; ...  % z (not provided)
-              0,      0,      0      ; ...  % z^2 (not provided)
-              0,      0,      0      ; ...  % z^3 (not provided)
-              0.0328, 0.0133, 0.3482 ; ...  % x*y
-              0.0264, 0.0099, 0.0099 ; ...  % S(t)
-              0,      0,      0.0280 ];      % Hx
-Xi_ri_var = Xi_ri_std.^2;
-
 dt = t(2)-t(1);
 fprintf('N = %d points total (fit on first %d), dt = %.3f\n', numel(t), numel(fitIdx), dt);
 
-%% --- SR3 --------------------------------------------------------------
-fprintf('\n--- Fitting SR3 (jointly discovering Hill parameters) ---\n');
-tic;
 Xfit = Xnoisy(fitIdx,:);
 dXdt_fit = derivative_sgolay(Xfit, dt);
 
@@ -112,12 +89,85 @@ dXdt_fit = derivative_sgolay(Xfit, dt);
 Theta_fit = libFun(Xfit, t(fitIdx));
 plot_collinearity_heatmap(Theta_fit(:,2:end), nameLib(2:end), 'nfkb');
 
+%% =========================================================================
+%  RI-SINDy -- HARDCODED from a standalone nfkb_risindy.m run.
+%
+%  RI-SINDy is not fit inside this script (unlike SR3/Nullcline-SINDy/
+%  Traditional SINDy below). This avoids running risindy.m twice --
+%  nfkb_risindy.m is the canonical fitting script; this comparison
+%  script's only job is to forward-integrate and compare against it.
+%
+%  IMPLEMENTATION NOTE -- library column order mismatch:
+%  nfkb_risindy.m's own printed output (and drift_balance_nfkb.m, which
+%  it depends on) use a DIFFERENT column order than this script's own
+%  library (nameLib, used by SR3/Nullcline/Traditional/plotting/error
+%  metrics):
+%     nfkb_risindy.m order:  [1, S, x, x^2, x^3, y, y^2, y^3, z, z^2, z^3, x*y, Hill(x)]
+%     nameLib order:         [1, x, x^2, x^3, y, y^2, y^3, z, z^2, z^3, x*y, S(t), Hx]
+%  The coefficients and posterior variances below were manually permuted
+%  from nfkb_risindy.m's printed order into nameLib order (S(t) moved
+%  from position 2 to position 12) before being hardcoded here. Verify
+%  against a fresh nfkb_risindy.m run before trusting these numbers if
+%  that script's hyperparameters, data generation, or fitting options
+%  ever change.
+%
+%  Source run:
+%    NF-kB: 800 training samples, dt=0.0375
+%    dx/dt = +0.9581*S -0.4241*x -1.0803*x*y
+%    dy/dt = -0.2052*y +0.9731*z -0.8421*x*y
+%    dz/dt = -0.6881*z +6.9522*Hill(x)
+%    Fit metrics (eval t>3.0): x RMSE=0.0694 R^2=0.8541
+%                              y RMSE=0.2837 R^2=0.8958
+%                              z RMSE=0.2983 R^2=0.1046
+%% =========================================================================
+fprintf('\n--- Using hardcoded RI-SINDy model (from a standalone nfkb_risindy.m run) ---\n');
+
+% rows in nameLib order: 1,x,x^2,x^3,y,y^2,y^3,z,z^2,z^3,x*y,S(t),Hx
+Xi_ri = [   0,        0,       0      ; ...  % 1
+           -0.4241,   0,       0      ; ...  % x
+            0,        0,       0      ; ...  % x^2
+            0,        0,       0      ; ...  % x^3
+            0,       -0.2052,  0      ; ...  % y
+            0,        0,       0      ; ...  % y^2
+            0,        0,       0      ; ...  % y^3
+            0,        0.9731, -0.6881 ; ...  % z
+            0,        0,       0      ; ...  % z^2
+            0,        0,       0      ; ...  % z^3
+           -1.0803,  -0.8421,  0      ; ...  % x*y
+            0.9581,   0,       0      ; ...  % S(t)
+            0,        0,       6.9522 ];      % Hx
+
+% Posterior variances, same nameLib row order as Xi_ri, permuted from
+% nfkb_risindy.m's Xi_var output the same way as Xi_ri above.
+Xi_ri_var = [ 0.0001, 0.0001, 0.0001 ; ...  % 1
+              0.0062, 0.0004, 0.0005 ; ...  % x
+              0.0001, 0.0003, 0.0002 ; ...  % x^2
+              0.0000, 0.0009, 0.0001 ; ...  % x^3
+              0.0030, 0.0049, 0.0001 ; ...  % y
+              0.0018, 0.0000, 0.0000 ; ...  % y^2
+              0.0001, 0.0000, 0.0000 ; ...  % y^3
+              0.0001, 0.0255, 0.0012 ; ...  % z
+              0.0000, 0.0013, 0.0000 ; ...  % z^2
+              0.0000, 0.0000, 0.0000 ; ...  % z^3
+              0.0022, 0.0215, 0.0002 ; ...  % x*y
+              0.0010, 0.0001, 0.0001 ; ...  % S(t)
+              0,      0,      0.0012 ];      % Hx
+
+print_coeffs('RI-SINDy', Xi_ri, nameLib);
+X0 = Xtrue(1,:);
+rhs_ri = @(tt,X) (libFun(X', tt) * Xi_ri)';
+Xhat_ri = integrate_model(rhs_ri, t, X0);
+
+%% =========================================================================
+%  SR3 -- parametric-library relax-and-split (Champion et al. 2020)
+%% =========================================================================
+fprintf('\n--- Fitting SR3 (jointly discovering Hill parameters) ---\n');
+tic;
 [Xi_sr3, K0_act, n_act] = run_SR3_nfkb(Xfit, t(fitIdx), dXdt_fit, p.S0, p.r, ownRegIdx);
 fprintf('SR3 discovered: K0=%.3f, n=%.3f\n', K0_act, n_act);
 fprintf('(True values: K0=%.2f, n=%d)\n', p.K0, p.n);
 fprintf('SR3 finished in %.1f s\n', toc);
 print_coeffs('SR3', Xi_sr3, nameLib);
-X0 = Xtrue(1,:);
 rhs_sr3 = @(tt,X) nfkb_sr3_rhs(tt, X, Xi_sr3, K0_act, n_act, p.S0, p.r);
 Xhat_sr3 = integrate_model(rhs_sr3, t, X0);
 
@@ -140,23 +190,8 @@ print_coeffs('Traditional SINDy', Xi_trad, nameLib);
 rhs_trad = @(tt,X) (libFun(X', tt) * Xi_trad)';
 Xhat_trad = integrate_model(rhs_trad, t, X0);
 
-%% --- Propagate the already-identified RI-SINDy model ----------------------
-fprintf('\n--- Propagating the already-identified RI-SINDy model ---\n');
-print_coeffs('RI-SINDy', Xi_ri, nameLib);
-rhs_ri = @(tt,X) (libFun(X', tt) * Xi_ri)';
-Xhat_ri = integrate_model(rhs_ri, t, X0);
-
 %% --- RI-SINDy UQ band via Monte Carlo over the coefficient posterior -----
 fprintf('\n--- Propagating RI-SINDy UQ band (n=100 Monte Carlo draws) ---\n');
-if all(Xi_ri_var(:)==0)
-    fprintf('NOTE: Xi_ri_var is currently all zeros (placeholder). The\n');
-    fprintf('      band below will be a degenerate zero-width line until\n');
-    fprintf('      real coefficient variances are provided.\n');
-elseif all(Xi_ri_var(8:10,:)==0,'all')
-    fprintf('NOTE: z, z^2, z^3 variances were not provided for NF-kB and\n');
-    fprintf('      default to zero; every other term uses real posterior\n');
-    fprintf('      standard deviations.\n');
-end
 draw_fn = @(Xi_s) integrate_model(@(tt,X) (libFun(X', tt) * Xi_s)', t, X0);
 [Xenv_lo, Xenv_hi] = mc_uq_propagate(draw_fn, Xi_ri, Xi_ri_var, 100);
 
@@ -168,9 +203,6 @@ print_error_block('Nullcline-SINDy',   Xtrue, Xhat_null, stateNames);
 print_error_block('Traditional SINDy', Xtrue, Xhat_trad, stateNames);
 
 %% --- Method-by-state comparison grid (rows = states, cols = methods) -----
-% Traditional SINDy and the noisy data scatter are deliberately excluded
-% here, same design intent as the Goodwin script -- both stay fully
-% represented in the tables and error blocks above.
 methodNames  = {'RI-SINDy','SR3','Nullcline-SINDy'};
 methodTrajs  = {Xhat_ri, Xhat_sr3, Xhat_null};
 methodColors = {[0 0.2 0.8], [0.75 0 0.55], [0.85 0.25 0]};
@@ -285,7 +317,8 @@ end
 
 
 %% =========================================================================
-%  CANDIDATE LIBRARY
+%  CANDIDATE LIBRARY (nameLib order -- used by SR3/Nullcline/Traditional/
+%  forward integration/error metrics/plotting)
 %% =========================================================================
 function Theta = lib_nfkb(X, tt, K0, n, S0, r)
     x = X(:,1); y = X(:,2); z = X(:,3);
