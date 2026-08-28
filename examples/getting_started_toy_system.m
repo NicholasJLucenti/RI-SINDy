@@ -1,34 +1,16 @@
-%% =========================================================================
-%  GETTING STARTED WITH RI-SINDy: a minimal self-repressing toy system
-%
-%  This is NOT one of the paper's systems -- it's a from-scratch, fully
-%  self-contained example meant to teach the RI-SINDy workflow end to
-%  end on the simplest possible case: ONE state variable, ONE regulatory
-%  (drift-balance) term, no delay, no synthetic-data complications.
-%
 %  System being identified:
 %      dx/dt = -k*x + alpha * Hill(x),   Hill(x) = 1 / (1 + (x/x0)^n)
-%
+
 %  x decays linearly (the drain term) and is produced by a repression
-%  Hill function of itself (the regulatory term) -- a simple negative
-%  self-feedback loop. RI-SINDy's job: recover k and alpha from noisy
-%  simulated data, WITHOUT ever handing the Hill coefficient to the
-%  sparse regression solver -- it's pinned by the drift-balance
-%  condition instead, exactly as in the three paper systems.
-%
+%  Hill function of itself (the regulatory term) 
+
 %  Requires: Optimization Toolbox (lsqlin)
 %            Signal Processing Toolbox (sgolayfilt)
-%
-%  No external data files needed -- everything is generated in-script.
-% =========================================================================
 
 clear; close all; clc;
 thisDir = fileparts(mfilename('fullpath'));
 addpath(genpath(fullfile(thisDir, '..', 'src')));
 
-%% --- 1. GROUND-TRUTH SYSTEM AND SYNTHETIC DATA -----------------------
-% These are the "true" parameters we're pretending not to know -- the
-% whole point of this script is recovering them from data alone.
 k_true     = 0.5;    % linear decay rate
 alpha_true = 3.0;    % Hill production strength
 x0_true    = 2.0;    % Hill half-saturation point
@@ -49,17 +31,11 @@ x_data_all = x_true + noise_level*std(x_true)*randn(size(x_true));
 x_data     = x_data_all(1:N);
 t          = t_all(1:N);
 
-fprintf('Toy system: %d training samples, dt = %.3f\n', N, dt);
-fprintf('True parameters: k = %.2f, alpha = %.2f, x0 = %.2f, n = %d\n\n', ...
-        k_true, alpha_true, x0_true, n_true);
-
-%% --- 2. NUMERICAL DERIVATIVE ------------------------------------------
+% Numerical differentiation
 dxdt = smooth_derivative(x_data_all, dt, 3, 11);
 dxdt_tr = dxdt(1:N);
 
-%% --- 3. LIBRARY ---------------------------------------------------------
-% Theta columns: [1, x, x^2, Hill(x)]. Column 4 (Hill) is the ONLY
-% pinned column -- everything else is a normal regression candidate.
+% Library construction
 Theta_tr = [build_poly_library(x_data, 2), hill_func(x_data, x0_true, n_true)];
 col_names = {'1', 'x', 'x^2', 'Hill(x)'};
 pinned_col = 4;
