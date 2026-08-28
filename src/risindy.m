@@ -1,25 +1,8 @@
 function [Xi, Xi_var, diagnostics] = risindy(Theta, dXdt, drift_fn, pinned_col, lb, ub, opts)
+
 % RISINDY  Regulation-Informed Sparse Identification of Nonlinear Dynamics.
-%
-%   [Xi, Xi_var] = RISINDY(Theta, dXdt, drift_fn, pinned_col, lb, ub)
-%   [Xi, Xi_var] = RISINDY(Theta, dXdt, drift_fn, pinned_col, lb, ub, opts)
-%   [Xi, Xi_var, diagnostics] = RISINDY(...)
-%
-% Fits a sparse dynamical model  dXdt ~ Theta * Xi  using iterative
-% reweighted sparse regression under a Bayesian shrinkage prior, while
-% one or more reserved library columns ("drift-balance" / regulatory
-% terms -- e.g. Hill functions) are NEVER entered into the regression.
-% Instead, on every pass their coefficients are pinned to a value
-% returned by a user-supplied drift_fn, which computes the value that
-% balances the currently-estimated drain/production terms against the
-% regulatory term's typical basis magnitude. This is what distinguishes
-% RI-SINDy from vanilla sparse regression: the regulatory term is
-% supplied from independent physical/regulatory information rather than
-% discovered (or discarded) by the sparse solver.
-%
-% See drift_balance_template.m for the full contract a drift_fn must
-% satisfy, plus a worked minimal example.
-%
+
+
 % INPUTS
 %   Theta       [N x n_lib]  library matrix (ALL columns, including
 %               pinned/regulatory ones). Build the polynomial part with
@@ -57,9 +40,6 @@ function [Xi, Xi_var, diagnostics] = risindy(Theta, dXdt, drift_fn, pinned_col, 
 %               XiN_smooth, W, free_cols, pinned_col) -- useful for
 %               debugging convergence or inspecting the drain-smoothed
 %               trajectory that fed the drift-balance calculation.
-%
-% See also: build_poly_library, poly_library_row, get_delayed,
-%           smooth_derivative, drift_balance_template.
 
     if nargin < 7, opts = struct(); end
     opts = default_risindy_opts(opts);
@@ -67,7 +47,7 @@ function [Xi, Xi_var, diagnostics] = risindy(Theta, dXdt, drift_fn, pinned_col, 
     n_lib = size(Theta, 2);
     n_var = size(dXdt, 2);
 
-    %% --- normalization ---
+    %% normalize
     col_scale                       = vecnorm(Theta, 2, 1);
     col_scale(col_scale == 0)       = 1;
     ThetaN                          = Theta ./ col_scale;
@@ -78,8 +58,6 @@ function [Xi, Xi_var, diagnostics] = risindy(Theta, dXdt, drift_fn, pinned_col, 
     free_cols   = setdiff(1:n_lib, pinned_col);
     ThetaN_free = ThetaN(:, free_cols);
 
-    %% --- initialize: joint LS informed by the full library, then discard
-    %      the pinned rows (those are handled by drift_fn, never by LS) ---
     XiN_full_ls        = ThetaN \ dXdtN;
     XiN                = zeros(n_lib, n_var);
     XiN(free_cols, :)  = XiN_full_ls(free_cols, :);
@@ -90,12 +68,12 @@ function [Xi, Xi_var, diagnostics] = risindy(Theta, dXdt, drift_fn, pinned_col, 
     for iter = 1:opts.n_iter
         for vi = 1:n_var
 
-            % --- pin drift-balance columns using the SMOOTHED drain estimate ---
+            % drift-balance function
             [pin_val, pin_var] = drift_fn(XiN_smooth, XiN_var, vi, col_scale, target_scale);
             XiN(pinned_col, vi)     = (1 - opts.eta_pin) * XiN(pinned_col, vi) + opts.eta_pin * pin_val;
             XiN_var(pinned_col, vi) = pin_var;   % already normalized-space; do NOT rescale by col_scale again
 
-            % --- sparse regression on the remaining (free) columns ---
+            % sparse regression
             bN      = dXdtN(:, vi) - ThetaN(:, pinned_col) * XiN(pinned_col, vi);
             w       = W(:, vi);
             active  = find(w < opts.w_threshold);
@@ -110,25 +88,21 @@ function [Xi, Xi_var, diagnostics] = risindy(Theta, dXdt, drift_fn, pinned_col, 
             end
             XiN(free_cols, vi) = xi_free;
 
-            % --- reweight sparsity prior ---
+            % reweight sparsity prior
             new_w    = compute_weights(xi_free, opts.prior, opts.prior_params);
             W(:, vi) = opts.eta_weight * W(:, vi) + (1 - opts.eta_weight) * new_w;
 
-            % --- posterior variance on free columns ---
+            % posterior variance on standard basis columns
             resid                  = bN - ThetaN_free * xi_free;
             rv                     = var(resid) + opts.var_floor;
             H_mat                  = (ThetaN_free' * ThetaN_free) / rv + diag(W(:, vi));
             XiN_var(free_cols, vi) = diag(inv(H_mat));
         end
 
-        % --- smooth the drain (free-column) coefficients for the NEXT
-        %     iteration's drift-balance calculation. This stabilizes
-        %     drift_fn against noisy per-iteration swings in the
-        %     regression fit; it does NOT affect XiN_var. ---
         XiN_smooth = opts.eta_drain * XiN_smooth + (1 - opts.eta_drain) * XiN;
     end
 
-    %% --- denormalize to physical units ---
+    %% denormalize
     Xi     = zeros(n_lib, n_var);
     Xi_var = zeros(n_lib, n_var);
     for vi = 1:n_var
@@ -157,15 +131,12 @@ function w = compute_weights(xi, prior, p)
 end
 
 function opts = default_risindy_opts(opts)
-% Defaults are a reasonable starting point only. Every system we've run
-% so far (Hes1, Goodwin, NF-kB) has needed at least one of these tuned
-% away from default -- treat opts as required reading per new system,
-% not as something to leave untouched.
-    if ~isfield(opts, 'eta_pin'),     opts.eta_pin     = 0.4;   end  % blend rate for the drift-balance pin value (share given to the NEW estimate)
-    if ~isfield(opts, 'eta_weight'),  opts.eta_weight  = 0.7;   end  % blend rate for sparsity weights (share RETAINED from the OLD estimate)
-    if ~isfield(opts, 'eta_drain'),   opts.eta_drain   = 0.7;   end  % blend rate for drain-coefficient smoothing (share RETAINED from the OLD estimate)
+
+    if ~isfield(opts, 'eta_pin'),     opts.eta_pin     = 0.4;   end  % relaxation rate for the drift-balance pin value (share given to the NEW estimate)
+    if ~isfield(opts, 'eta_weight'),  opts.eta_weight  = 0.7;   end  % relaxation rate for sparsity weights (share RETAINED from the OLD estimate)
+    if ~isfield(opts, 'eta_drain'),   opts.eta_drain   = 0.7;   end  % relaxation rate for drain-coefficient smoothing (share RETAINED from the OLD estimate)
     if ~isfield(opts, 'n_iter'),      opts.n_iter      = 20;    end
-    if ~isfield(opts, 'w_threshold'), opts.w_threshold = 1e2;   end  % a free column is still "active" (eligible for lsqlin) while its weight is below this
+    if ~isfield(opts, 'w_threshold'), opts.w_threshold = 1e2;   end  
     if ~isfield(opts, 'var_floor'),   opts.var_floor   = 1e-10; end
     if ~isfield(opts, 'prior'),       opts.prior       = 'SpikeSlab'; end
     if ~isfield(opts, 'prior_params')
